@@ -1,0 +1,7 @@
+# One runtime dependency. Idle detection, lock detection, the global hotkey,
+# LockWorkStation, the system accent colour and Mica are all plain ctypes.
+PySide6>=6.9,<7
+
+# Development only
+pytest>=8
+pyinstaller>=6

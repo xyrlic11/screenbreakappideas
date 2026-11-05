@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="รายงานสรุป Blink เฟส 1 — สถาปัตยกรรม การทดสอบ การแพ็คเป็นแอป">
+<title>Blink v0.1.0</title>
+<style>
+  /* ---- tokens: complete light palette on bare :root ------------------- */
+  :root {
+    --ground:      #F1F4F7;
+    --surface:     #FFFFFF;
+    --surface-2:   #E8ECF1;
+    --ink:         #0E1720;
+    --ink-2:       #43505E;
+    --ink-3:       #74818F;
+    --hairline:    rgba(14, 23, 32, 0.12);
+    --hairline-2:  rgba(14, 23, 32, 0.06);
+    --accent:      #0067C0;
+    --accent-soft: rgba(0, 103, 192, 0.10);
+    --amber:       #8A5200;
+    --amber-soft:  rgba(138, 82, 0, 0.12);
+    --red:         #B32B1C;
+    --green:       #0F7B0F;
+    --shadow:      0 1px 2px rgba(14,23,32,.06), 0 8px 24px rgba(14,23,32,.05);
+
+    --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", "SF Mono",
+            "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+    --sans: "Segoe UI Variable Text", -apple-system, BlinkMacSystemFont,
+            "Segoe UI", "Leelawadee UI", "Noto Sans Thai", Sarabun,
+            Roboto, "Helvetica Neue", sans-serif;
+
+    --measure: 68ch;
+    --pad: clamp(20px, 5vw, 64px);
+  }
+
+  /* system dark, unless the reader explicitly chose light */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0B1016;   /* the app's own break-screen ground */
+      --surface:     #131A22;
+      --surface-2:   #1B242E;
+      --ink:         #E6EDF3;
+      --ink-2:       #AEBAC6;
+      --ink-3:       #7A8794;
+      --hairline:    rgba(230, 237, 243, 0.14);
+      --hairline-2:  rgba(230, 237, 243, 0.07);
+      --accent:      #4CC2FF;
+      --accent-soft: rgba(76, 194, 255, 0.12);
+      --amber:       #E3B341;
+      --amber-soft:  rgba(227, 179, 65, 0.14);
+      --red:         #F4655B;
+      --green:       #6CCB5F;
+      --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.3);
+    }
+  }
+  /* explicit dark choice wins over a light OS */
+  :root[data-theme="dark"] {
+    --ground:      #0B1016;
+    --surface:     #131A22;
+    --surface-2:   #1B242E;
+    --ink:         #E6EDF3;
+    --ink-2:       #AEBAC6;
+    --ink-3:       #7A8794;
+    --hairline:    rgba(230, 237, 243, 0.14);
+    --hairline-2:  rgba(230, 237, 243, 0.07);
+    --accent:      #4CC2FF;
+    --accent-soft: rgba(76, 194, 255, 0.12);
+    --amber:       #E3B341;
+    --amber-soft:  rgba(227, 179, 65, 0.14);
+    --red:         #F4655B;
+    --green:       #6CCB5F;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--ground); }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.72;          /* Thai stacks vowels and tone marks */
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: clamp(28px, 6vw, 72px) var(--pad) 96px;
+  }
+
+  /* ---- masthead ------------------------------------------------------- */
+  .masthead { border-bottom: 1px solid var(--hairline); padding-bottom: 28px; }
+
+  .wordmark {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    font-family: var(--mono);
+  }
+  .wordmark b {
+    font-size: clamp(30px, 6vw, 46px);
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    line-height: 1;
+  }
+  .ver {
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3); padding-bottom: .3em;
+  }
+  .thesis {
+    margin: 18px 0 0;
+    max-width: var(--measure);
+    font-size: clamp(17px, 2.2vw, 20px);
+    color: var(--ink-2);
+    text-wrap: pretty;
+  }
+  .thesis strong { color: var(--ink); font-weight: 600; }
+
+  /* ---- metric strip ---------------------------------------------------- */
+  .metrics {
+    display: grid; gap: 1px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    background: var(--hairline-2);
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 32px;
+  }
+  .metric { background: var(--surface); padding: 16px 18px; }
+  .metric .n {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 26px; font-weight: 600; letter-spacing: -0.03em;
+    line-height: 1.1; display: block;
+  }
+  .metric .k {
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: .11em; text-transform: uppercase;
+    color: var(--ink-3); margin-top: 6px; display: block;
+  }
+  .metric.ok .n { color: var(--green); }
+
+  /* ---- sections -------------------------------------------------------- */
+  section { margin-top: 56px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent);
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 14px;
+  }
+  .eyebrow::after {
+    content: ""; flex: 1; height: 1px; background: var(--hairline);
+  }
+  h2 {
+    margin: 0 0 12px;
+    font-size: clamp(21px, 3vw, 26px);
+    font-weight: 600; letter-spacing: -0.01em; line-height: 1.4;
+    text-wrap: balance;
+  }
+  h3 {
+    margin: 30px 0 8px;
+    font-size: 17px; font-weight: 600; line-height: 1.5;
+  }
+  p { margin: 0 0 14px; max-width: var(--measure); text-wrap: pretty; }
+  .lede { color: var(--ink-2); }
+  code {
+    font-family: var(--mono); font-size: .88em;
+    background: var(--surface-2); color: var(--ink);
+    padding: .12em .4em; border-radius: 3px;
+    word-break: break-word;
+  }
+
+  /* ---- tables ---------------------------------------------------------- */
+  .scroll { overflow-x: auto; margin: 18px 0 6px; }
+  table {
+    border-collapse: collapse; width: 100%; min-width: 460px;
+    font-size: 15px;
+  }
+  th, td {
+    text-align: left; padding: 11px 14px 11px 0;
+    border-bottom: 1px solid var(--hairline-2);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 500;
+    border-bottom: 1px solid var(--hairline);
+    white-space: nowrap;
+  }
+  td.num, th.num {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    text-align: right; padding-right: 0; white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  tbody tr.total td {
+    border-top: 1px solid var(--hairline);
+    border-bottom: none;
+    font-weight: 600;
+  }
+  .mono { font-family: var(--mono); font-size: .9em; }
+
+  /* ---- pills ----------------------------------------------------------- */
+  .pill {
+    display: inline-block;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+    padding: 2px 8px; border-radius: 3px; white-space: nowrap;
+    border: 1px solid currentColor;
+  }
+  .pill.hard  { color: var(--red); }
+  .pill.mid   { color: var(--amber); }
+  .pill.soft  { color: var(--accent); }
+  .pill.done  { color: var(--green); }
+
+  /* ---- escalation track ------------------------------------------------ */
+  .track-wrap { margin: 22px 0 6px; }
+  .track {
+    position: relative; height: 46px; margin-bottom: 34px;
+  }
+  .rail {
+    position: absolute; inset: 18px 0 auto 0; height: 6px;
+    background: var(--surface-2); border-radius: 3px;
+  }
+  .rail .fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--accent-soft); border-radius: 3px 0 0 3px;
+  }
+  .zone {
+    position: absolute; top: 12px; bottom: 12px;
+    background: var(--amber-soft);
+    border-left: 1px solid var(--amber);
+    border-right: 1px solid var(--amber);
+  }
+  .mark { position: absolute; top: 6px; }
+  .mark i {
+    display: block; width: 2px; height: 30px; background: currentColor;
+  }
+  .mark span {
+    position: absolute; top: 34px; left: 0;
+    transform: translateX(-50%);
+    font-family: var(--mono); font-size: 11px; white-space: nowrap;
+    color: var(--ink-2);
+  }
+  /* A centred label on the first or last tick hangs off the page on a
+     narrow screen, so the end markers anchor inward instead. */
+  .mark.at-start span { transform: translateX(0); }
+  .mark.at-end span { transform: translateX(-100%); }
+  .mark.soft { color: var(--accent); }
+  .mark.mid  { color: var(--amber); }
+  .mark.hard { color: var(--red); }
+  .mark.hard i { width: 3px; }
+  .track-cap {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--ink-3);
+    display: flex; justify-content: space-between; gap: 16px;
+  }
+  .caption {
+    font-size: 14px; color: var(--ink-3); max-width: var(--measure);
+    margin: 4px 0 0;
+  }
+
+  /* ---- pipeline -------------------------------------------------------- */
+  .pipe { display: flex; align-items: stretch; gap: 0; min-width: 640px; }
+  .stage {
+    flex: 1; padding: 14px 16px;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+  .stage + .stage { border-left: none; }
+  .stage:first-child { border-radius: 4px 0 0 4px; }
+  .stage:last-child  { border-radius: 0 4px 4px 0; }
+  .stage b {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--accent);
+    display: block; margin-bottom: 6px; font-weight: 500;
+  }
+  .stage span { font-size: 13.5px; color: var(--ink-2); line-height: 1.55; }
+  .stage.pure { background: var(--accent-soft); }
+  .stage.pure b { color: var(--accent); }
+
+  /* ---- notes ----------------------------------------------------------- */
+  .note {
+    border-left: 2px solid var(--hairline);
+    padding: 2px 0 2px 18px;
+    margin: 20px 0;
+  }
+  .note.flag { border-left-color: var(--amber); }
+  .note h3 { margin-top: 0; }
+  .note p:last-child { margin-bottom: 0; }
+
+  ul { margin: 0 0 14px; padding-left: 1.15em; max-width: var(--measure); }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--ink-3); }
+
+  footer {
+    margin-top: 64px; padding-top: 22px;
+    border-top: 1px solid var(--hairline);
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em;
+    color: var(--ink-3);
+    display: flex; flex-wrap: wrap; gap: 8px 22px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <div class="wordmark">
+      <b>BLINK</b>
+      <span class="ver">v0.1.0 &nbsp;·&nbsp; phase 1 complete</span>
+    </div>
+    <p class="thesis">
+      โปรแกรมเตือนพักสายตาบน Windows ตามกติกา 20-20-20
+      จุดต่างอยู่ที่<strong>ตอนที่คุณไม่อยากพัก</strong> — ไม่ห้ามคุณ
+      แต่ทุกทางออกมีต้นทุน และต้นทุนนั้นมองเห็นได้
+    </p>
+
+    <div class="metrics">
+      <div class="metric ok">
+        <span class="n">94</span>
+        <span class="k">tests passing</span>
+      </div>
+      <div class="metric">
+        <span class="n">0.26s</span>
+        <span class="k">to simulate 8h</span>
+      </div>
+      <div class="metric">
+        <span class="n">1</span>
+        <span class="k">runtime dependency</span>
+      </div>
+      <div class="metric">
+        <span class="n">97 MB</span>
+        <span class="k">packaged app</span>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <div class="eyebrow">the one idea</div>
+    <h2>ข้ามได้เสมอ แต่ต้องจ่าย</h2>
+    <p class="lede">
+      แอปเตือนพักสายตามีเป็นสิบตัว ที่ต่างคือกลไกตอนคุณกดข้าม
+      ปุ่ม Skip อยู่มุมล่างขวา ต้องกดค้าง 5 วินาที — นานพอให้ต้องตัดสินใจ
+      สั้นพอที่จะไม่ใช่การแกล้ง
+    </p>
+    <p>
+      ปุ่มฉุกเฉินอยู่มุมล่าง<em>ซ้าย</em> คนละฝั่ง กดครั้งเดียวปิดเลย
+      ไม่มีต้นทุน — <strong>จงใจ</strong> เพราะทางหนีที่คนกลัวจะกด
+      คือทางหนีที่คนจะหาวิธีอ้อม แล้วระบบต้นทุนทั้งหมดก็เหลือแค่ฉากหน้า
+      เปลี่ยนเป็นบันทึกไว้แล้วโชว์ในหน้าสถิติแทน
+    </p>
+  </section>
+
+  <section>
+    <div class="eyebrow">enforcement</div>
+    <h2>เลือกได้ว่าจะให้บังคับแค่ไหน</h2>
+    <p class="lede">
+      ตั้งแยกกันระหว่างพักสายตากับพักยาว นี่คือฟีเจอร์ที่เพิ่มล่าสุด
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>โหมด</th>
+            <th>เกิดอะไรขึ้น</th>
+            <th>ข้ามยังไง</th>
+            <th>มีใน</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pill mid">overlay</span></td>
+            <td>เต็มจอ บังทุกอย่างรวม taskbar <span class="mono">(ค่าเริ่มต้น)</span></td>
+            <td>กดค้าง 5 วิ</td>
+            <td>ทั้งคู่</td>
+          </tr>
+          <tr>
+            <td><span class="pill soft">popup</span></td>
+            <td>การ์ดมุมจอ ตัวนับและกิจกรรมเดียวกัน ไม่แย่ง focus ไม่บังอะไร</td>
+            <td>คลิกที่การ์ด</td>
+            <td>ทั้งคู่</td>
+          </tr>
+          <tr>
+            <td><span class="pill hard">lock</span></td>
+            <td><code>LockWorkStation()</code> ต้องพิมพ์รหัสผ่านใหม่</td>
+            <td>ปลดล็อคก่อนเวลา — บันทึกเป็น <code>skipped</code></td>
+            <td>พักยาว</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">
+      พักสายตาตั้งเป็น lock ไม่ได้ตั้งใจ — ล็อคจอเพื่อพัก 20 วินาที
+      เสียเวลาพิมพ์รหัสผ่านนานพอๆ กับเวลาพัก
+    </p>
+
+    <div class="note">
+      <h3>โหมด popup ไม่ใช่ของถูกลด</h3>
+      <p>
+        พักครบในโหมดนี้นับเป็นพักครบเหมือนกัน แต่ฐานข้อมูลบันทึกไว้ว่า
+        แต่ละรอบใช้โหมดไหน สองอย่างนี้จะได้ไม่ปนกันเงียบๆ
+        และตั้งพักยาวเป็น popup จะข้ามนับถอยหลัง 60 วินาทีไปด้วย —
+        นับถอยหลังมีไว้ให้เซฟงานก่อนจอหาย การ์ดมุมจอไม่ได้เอาอะไรไป
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">escalation</div>
+    <h2>การรบกวนมาเป็น 3 ระดับ</h2>
+    <p class="lede">
+      การถูกขัดจังหวะกลางประโยคคือเหตุผลอันดับหนึ่งที่คนถอนแอปแนวนี้
+      การเตือนจึงไล่ระดับ และมากระจุกอยู่ท้ายรอบ
+    </p>
+
+    <div class="track-wrap">
+      <div class="track">
+        <div class="rail"><div class="fill" style="width:90%"></div></div>
+        <div class="zone" style="left:90%; right:0;"></div>
+        <div class="mark hard at-end" style="left:100%">
+          <i></i><span>20:00</span>
+        </div>
+        <div class="mark at-start" style="left:0">
+          <i style="background:var(--ink-3); height:22px"></i><span>0:00</span>
+        </div>
+      </div>
+      <div class="track-cap">
+        <span>เวลาจ้องจอสะสม 1 รอบ = 20 นาที</span>
+        <span>2 นาทีสุดท้าย ↓</span>
+      </div>
+    </div>
+
+    <div class="track-wrap" style="margin-top:26px">
+      <div class="track">
+        <div class="rail"><div class="fill" style="width:100%"></div></div>
+        <div class="mark soft at-start" style="left:0">
+          <i></i><span>18:00 toast</span>
+        </div>
+        <div class="mark mid" style="left:91.7%">
+          <i></i><span>19:50 ขอบจอ</span>
+        </div>
+        <div class="mark hard at-end" style="left:100%">
+          <i></i><span>20:00 พัก</span>
+        </div>
+      </div>
+      <div class="track-cap">
+        <span>ขยายช่วง 18:00 – 20:00</span>
+      </div>
+    </div>
+
+    <p class="caption">
+      Toast ปิดเองได้และไม่แย่ง focus, แถบขอบจอคลิกทะลุได้
+      ทั้งสองอย่างไม่ขวางงานที่กำลังทำอยู่
+    </p>
+
+    <h3>Grace period</h3>
+    <p>
+      ถ้าครบเวลาตอนกำลังพิมพ์รัวอยู่ จะรอจังหวะที่หยุดพิมพ์
+      เลื่อนได้สูงสุด 2 นาทีแล้วเด้งแน่นอน ส่วนคนที่แค่นั่งอ่านเฉยๆ
+      เด้งทันที เพราะไม่มีอะไรต้องถนอม
+    </p>
+  </section>
+
+  <section>
+    <div class="eyebrow">architecture</div>
+    <h2>ชั้นเดียวที่ตัดสินใจ ชั้นเดียวที่วาด</h2>
+    <p class="lede">
+      ทุก 1 วินาที: อ่าน sensor → อัปเดต state → ถาม policy → สั่ง UI
+      ทางเดียว ไม่ย้อนกลับ
+    </p>
+
+    <div class="scroll">
+      <div class="pipe">
+        <div class="stage">
+          <b>sensors</b>
+          <span>idle time, lock state, ช่องโหว่ใน tick stream</span>
+        </div>
+        <div class="stage pure">
+          <b>state</b>
+          <span>นับเวลาอยู่ไหม นับไปเท่าไรแล้ว</span>
+        </div>
+        <div class="stage pure">
+          <b>policy</b>
+          <span>ถึงเวลาพักหรือยัง ต้องทำอะไร</span>
+        </div>
+        <div class="stage">
+          <b>commands</b>
+          <span>start_break, show_toast, lock_workstation</span>
+        </div>
+        <div class="stage">
+          <b>ui</b>
+          <span>วาดตามที่ถูกสั่ง ไม่นับเวลาเอง</span>
+        </div>
+      </div>
+    </div>
+    <p class="caption">
+      กล่องสีคือ <code>blink/core/</code> — import แค่ stdlib ไม่มี Qt
+      ไม่มี Win32 และไม่เคยอ่านนาฬิกา เวลาถูกส่งเข้ามาเป็น parameter
+    </p>
+
+    <p>
+      ถาม UI ว่าอีกกี่นาทีจะถึงเวลาพัก มันตอบไม่ได้ — มันรู้แค่ว่า
+      ถูกสั่งให้วาดอะไรล่าสุด ข้อจำกัดนี้แหละที่ทำให้เทสต์เวลาได้จริง
+      และทำให้โหมด overlay กับ popup ส่ง command ชุดเดียวกันเป๊ะ
+    </p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>ชั้น</th>
+            <th>หน้าที่</th>
+            <th class="num">บรรทัด</th>
+            <th class="num">ไฟล์</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">core/</td>
+            <td>state machine, policy, 20-20-20, grace, พักยาว</td>
+            <td class="num">442</td><td class="num">5</td>
+          </tr>
+          <tr>
+            <td class="mono">sensors/</td>
+            <td>ctypes 3 ตัว ไม่มีอย่างอื่น</td>
+            <td class="num">68</td><td class="num">4</td>
+          </tr>
+          <tr>
+            <td class="mono">storage/</td>
+            <td>config.json + SQLite</td>
+            <td class="num">228</td><td class="num">3</td>
+          </tr>
+          <tr>
+            <td class="mono">ui/</td>
+            <td>overlay, popup, หน้าต่างหลัก, tray, theme</td>
+            <td class="num">1,930</td><td class="num">17</td>
+          </tr>
+          <tr>
+            <td class="mono">ui/pages/</td>
+            <td>หน้าหลัก, สถิติ, ตั้งค่า, เกี่ยวกับ</td>
+            <td class="num">438</td><td class="num">6</td>
+          </tr>
+          <tr>
+            <td class="mono">ui/activities/</td>
+            <td>กิจกรรมพัก 5 แบบ</td>
+            <td class="num">276</td><td class="num">7</td>
+          </tr>
+          <tr class="total">
+            <td>รวมโค้ดแอป</td>
+            <td class="mono" style="color:var(--ink-3)">ไม่นับบรรทัดว่างและคอมเมนต์</td>
+            <td class="num">3,382</td><td class="num">42</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">verification</div>
+    <h2>8 ชั่วโมงจำลอง ใน 0.26 วินาที</h2>
+    <p class="lede">
+      เพราะ core ไม่เคยอ่านนาฬิกา เทสต์จึงป้อนเวลาปลอมเข้าไปได้
+      ทั้งวันทำงานรีเพลย์เสร็จเร็วกว่ากะพริบตา
+    </p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>ไฟล์เทสต์</th><th>คุมอะไร</th><th class="num">เทสต์</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">test_policy.py</td>
+            <td>ลำดับการเตือน, grace, skip, พักยาว, โหมดบังคับ, ผลลัพธ์การล็อคจอ</td>
+            <td class="num">31</td>
+          </tr>
+          <tr>
+            <td class="mono">test_db.py</td>
+            <td>เส้นแบ่งวัน 04:00, streak, migration ฐานข้อมูลเก่า</td>
+            <td class="num">15</td>
+          </tr>
+          <tr>
+            <td class="mono">test_config.py</td>
+            <td>ไฟล์พัง/ค่าเกิน/ค่าผิด, migration <code>real_lock</code></td>
+            <td class="num">13</td>
+          </tr>
+          <tr>
+            <td class="mono">test_activities.py</td>
+            <td>กิจกรรมที่ยาวเกินไม่ถูกเลือกให้พักสั้น</td>
+            <td class="num">10</td>
+          </tr>
+          <tr>
+            <td class="mono">test_state.py</td>
+            <td>idle, จอล็อค, sleep gap, pause, กันโกงด้วย Win+L</td>
+            <td class="num">16</td>
+          </tr>
+          <tr>
+            <td class="mono">test_i18n.py</td>
+            <td>key และ <code>{placeholder}</code> ตรงกันทั้งสองภาษา</td>
+            <td class="num">9</td>
+          </tr>
+          <tr class="total">
+            <td>รวม</td><td></td><td class="num">94</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>เคสที่คุ้มที่สุด</h3>
+    <ul>
+      <li>ปิดฝาโน้ตบุ๊ค 2 ชั่วโมง ต้องไม่กลับมาเป็นเวลาจ้องจอ 2 ชั่วโมง</li>
+      <li>สั่งหยุดโปรแกรม 1 ชม. ต้องแค่หยุดนับ ไม่ใช่ล้างตัวนับให้ฟรี</li>
+      <li>ยกเลิกพักยาวแล้วต้องไม่เด้งซ้ำในวินาทีถัดไป</li>
+      <li>วันที่ไม่มีรอบพักถึงกำหนดเลย ต้องอ่านว่า 100% ไม่ใช่ 0%</li>
+      <li>overlay กับ popup ต้องส่ง command เหมือนกันทุกไบต์</li>
+      <li>กด <code>Win+L</code> วินาทีเดียว และ UAC prompt ต้องไม่ได้อะไรฟรี</li>
+      <li>ปลดล็อค 3 วินาทีระหว่างพักยาว ต้องบันทึกเป็น skipped ไม่ใช่ completed</li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="eyebrow">packaging</div>
+    <h2>142 MB → 97 MB</h2>
+    <p class="lede">
+      ตอนไล่ดูว่าอะไรอยู่ใน build เจอว่ามันแถม FFmpeg กับ OpenSSL มาด้วย
+      เพื่อเล่นไฟล์เสียง WAV 2 ไฟล์
+    </p>
+    <p>
+      ซึ่งขัดกับที่ README เขียนว่า “ไม่ต่อเน็ต ไม่มีโค้ดเปิด socket สักบรรทัด”
+      เลยเปลี่ยนจาก <code>QSoundEffect</code> ไปใช้ <code>winsound</code>
+      ของ stdlib แล้วตัด QtMultimedia, QtNetwork, QML และ Quick ออกได้ทั้งชุด
+      ตอนนี้ไม่มี <code>libssl</code> ในแพ็คเกจแล้วจริงๆ
+    </p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>รายการ</th><th>ค่า</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>ผลลัพธ์</td><td class="mono">dist/Blink/Blink.exe</td></tr>
+          <tr><td>ขนาดรวม</td><td class="mono">97 MB (Qt รวมอยู่ในนั้น)</td></tr>
+          <tr><td>ไอคอน</td><td class="mono">7 ขนาด generate จากโค้ดชุดเดียวกับ tray</td></tr>
+          <tr><td>autostart</td><td class="mono">HKCU Run + <code>--tray</code> ไม่ต้อง admin</td></tr>
+          <tr><td>เมื่อพัง</td><td class="mono">%APPDATA%\Blink\crash.log</td></tr>
+          <tr><td>ลายเซ็นดิจิทัล</td><td><span class="pill mid">ยังไม่มี</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">
+      .exe ยังไม่ได้เซ็น ถ้าส่งให้คนอื่น SmartScreen จะเตือนครั้งแรก
+      ต้องมี code signing certificate ถึงจะหาย
+    </p>
+  </section>
+
+  <section>
+    <div class="eyebrow">found by review · reproduced here</div>
+    <h2>สามบั๊กที่เจอตอนเอา core ไปรันจริง</h2>
+    <p class="lede">
+      เพราะ <code>blink/core/</code> เป็น stdlib ล้วนจริง ผู้รีวิวยกทั้งแพ็กเกจ
+      ไปรันในคอนเทนเนอร์ Linux ได้โดยไม่แก้อะไรสักบรรทัด — ข้อดีของการแยกชั้น
+      ที่ตั้งใจไว้ กลับกลายเป็นสิ่งที่ทำให้บั๊กถูกจับได้
+    </p>
+
+    <div class="note flag">
+      <h3><span class="pill hard">critical</span> &nbsp; Win+L วินาทีเดียว ล้างเวลาทั้งหมดฟรี</h3>
+      <p>
+        จ้องจอ 1,000 วินาที แล้วล็อคจอ 1 วินาที → ตัวนับเหลือ 0 ทั้งคู่
+        กด <code>Win+L</code> ทุกชั่วโมงครึ่งก็ไม่ต้องเจอพักยาวอีกเลย
+        และเพราะ <code>OpenInputDesktop</code> ล้มเหลวตอนขึ้น secure desktop ด้วย
+        ทุก UAC prompt จึงล้างเวลาทิ้งเงียบๆ
+      </p>
+      <p>
+        ที่ต้องพูดตรงๆ: <code>test_locked_screen_freezes_and_resets</code>
+        เขียนล็อกพฤติกรรมผิดนี้ไว้พอดี — ไม่ใช่ลืมเทสต์
+        แต่เป็นการตัดสินใจที่ผิดแล้วถูกตรึงด้วยเทสต์ ซึ่งอันตรายกว่าไม่มีเทสต์
+      </p>
+      <p>
+        <strong>แก้</strong> — ล็อคจอ = แช่ตัวนับทันที แต่รีเซ็ตต่อเมื่อล็อคนานถึง
+        เกณฑ์เดียวกับลุกไปพัก แยกเทสต์เดิมเป็นสองตัวที่พูดคนละเรื่อง
+      </p>
+    </div>
+
+    <div class="note flag">
+      <h3><span class="pill mid">minor</span> &nbsp; counter_reset ยิงวินาทีละครั้ง</h3>
+      <p>
+        ลุกไปกินข้าว 10 นาที = 600 event สำหรับเหตุการณ์เดียว ตอนนี้ยังไม่เจ็บ
+        เพราะฐานข้อมูลเก็บแค่ break แต่พอต่อ event log เข้า SQLite ตามแผนเฟส 2
+        ตารางจะบวมทันที <strong>แก้</strong> — ประกาศเฉพาะตอนที่ล้างของจริง
+      </p>
+    </div>
+
+    <div class="note flag">
+      <h3><span class="pill hard">high</span> &nbsp; ล็อคจอจริง ไม่ได้บังคับอะไรเลย</h3>
+      <p>
+        รอบพักยาวถูกล้าง <em>ก่อน</em> สั่งล็อค ปลดล็อคหลัง 3 วินาที
+        = ได้เครดิตพักยาว 5 นาทีเต็ม โหมดที่หนักที่สุดในแอป
+        กลายเป็นโหมดที่หลบง่ายที่สุด
+      </p>
+      <p>
+        <strong>แก้</strong> — มองการล็อคเป็น <em>คำขอ</em> ไม่ใช่ <em>ผลลัพธ์</em>
+        สั่งแล้วเฝ้าดูว่าจอดำครบเวลาจริงไหม กลับมาก่อนเวลายังรีเซ็ตรอบให้
+        (ไม่งั้นเด้งซ้ำทันทีที่นั่งลง) แต่บันทึกเป็น <code>skipped</code>
+      </p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>สถานการณ์</th><th>เดิม</th><th>หลังแก้</th></tr></thead>
+        <tbody>
+          <tr><td>Win+L 1 วินาที</td><td class="mono">0s / 0s</td><td class="mono">1000s / 1000s</td></tr>
+          <tr><td>ล็อคจริง 301 วินาที</td><td class="mono">0s</td><td class="mono">0s</td></tr>
+          <tr><td>ลุกไป 10 นาที</td><td class="mono">600 events</td><td class="mono">1 event</td></tr>
+          <tr><td>ปลดล็อคหลัง 3 วิ</td><td class="mono">completed</td><td class="mono">skipped</td></tr>
+          <tr><td>อยู่จนครบ 5 นาที</td><td class="mono">completed</td><td class="mono">completed</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">found while building</div>
+    <h2>สามเรื่องที่เกือบหลุด</h2>
+
+    <div class="note flag">
+      <h3>typo ใน config กลายเป็นตัวเปิดล็อคจอ</h3>
+      <p>
+        ค่าที่ไม่รู้จักใน <code>enforcement</code> ตกไปเป็นตัวแรกของ tuple
+        ซึ่งดันเป็น <code>lock</code> — พิมพ์ผิดหนึ่งตัวแล้วจอล็อคเอง
+        แก้ให้ตกไปที่ค่า default ของ dataclass แทน แล้วเขียนเทสต์คุมไว้
+      </p>
+    </div>
+
+    <div class="note flag">
+      <h3>ปุ่มฉุกเฉินหายไปจากหน้าพัก</h3>
+      <p>
+        <code>FlatButton</code> เปลี่ยน signature แล้ว <code>self</code>
+        ไปตกที่พารามิเตอร์ <code>accent</code> — ปุ่มเลยกลายเป็นหน้าต่างลอย
+        แทนที่จะเป็นลูกของ overlay เจอตอน render ออกมาดูด้วยตา
+      </p>
+    </div>
+
+    <div class="note flag">
+      <h3>.exe เปิดไม่ขึ้นแบบเงียบๆ</h3>
+      <p>
+        PyInstaller รัน <code>blink/__main__.py</code> เป็นสคริปต์เปล่า
+        ไม่มี package context ทำให้ relative import พังทั้งไฟล์ และเพราะ
+        build ไม่มี console จึงไม่มีที่พิมพ์ error เลย เพิ่ม
+        <code>launcher.py</code> กับ crash log แก้ทั้งสองอย่างพร้อมกัน
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">not built yet</div>
+    <h2>ที่เหลือไว้เฟสถัดไป</h2>
+    <p class="lede">
+      ระบบหนี้สายตา (Eye Debt), whitelist/DND ตอนประชุมหรือพรีเซนต์,
+      ตรวจเสียงและ active window, สถิติยาวกว่า 7 วัน, installer
+    </p>
+    <p>
+      จุดต่อของ Eye Debt เตรียมไว้แล้ว: ความยาวการพักมาจาก
+      <code>PolicyEngine._next_break_sec()</code> บรรทัดเดียวที่ต้องแก้
+    </p>
+
+    <h3>ข้อจำกัดที่แก้ไม่ได้</h3>
+    <ul>
+      <li>เกม fullscreen exclusive — Windows ไม่ยอมให้ overlay ไหนวาดทับ</li>
+      <li>Mica ต้อง Windows 11 รุ่นเก่ากว่านั้นจะได้หน้าต่างทึบธรรมดา</li>
+      <li>จอที่เสียบกลาง<em>ระหว่าง</em>รอบพัก ต้องรอรอบถัดไป</li>
+    </ul>
+
+    <div class="note">
+      <h3>ที่ยังไม่ได้ทดสอบ</h3>
+      <p>
+        ตัว .exe ทดสอบแล้วว่าเปิดขึ้น สร้างฐานข้อมูลและไฟล์เสียงได้
+        ไม่มี crash log — แต่ยังไม่ได้เปิดหน้าต่างหรือปล่อยให้เด้ง overlay
+        จากตัว frozen จริง เพราะจะขึ้นจอตอนคุณกำลังใช้เครื่องอยู่
+        ส่วน UI ทั้งหมด verify ด้วยการ render offscreen แทน
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <span>Python 3.14.7</span>
+    <span>PySide6 6.11.1</span>
+    <span>Windows 11</span>
+    <span>94 tests · 0 failing</span>
+    <span>ไทย / English</span>
+  </footer>
+
+</div>
+</body>
+</html>
