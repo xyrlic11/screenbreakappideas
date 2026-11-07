@@ -7,6 +7,8 @@ Keeping the decisions here is what makes the whole thing testable.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from .models import (Command, CommandKind as K, Config, LOCK, Phase, POPUP,
                      SensorReading, Snapshot, State)
 from .state import ScreenTimeMachine
@@ -24,6 +26,7 @@ class PolicyEngine:
 
         self._break_ends_at: float | None = None
         self._break_kind = "short"
+        self._break_details: dict = {}
 
         self._long_warn_ends_at: float | None = None
         self._long_extra_sec = 0.0
@@ -119,7 +122,9 @@ class PolicyEngine:
             })]
         return self._finish_break("completed")
 
-    def _start_break(self, r: SensorReading, kind: str, duration: float) -> list[Command]:
+    def _start_break(self, r: SensorReading, kind: str, duration: float,
+                     *, scheduled: bool = True) -> list[Command]:
+        self._identify_break(kind, duration, scheduled)
         self.phase = Phase.BREAK if kind == "short" else Phase.LONG_BREAK
         self._break_kind = kind
         self._break_ends_at = r.now + duration
@@ -136,6 +141,23 @@ class PolicyEngine:
         }))
         return cmds
 
+    def _identify_break(self, kind: str, duration: float, scheduled: bool) -> None:
+        screen_sec = (self.machine.long_time_sec if kind == "long"
+                      else self.machine.screen_time_sec)
+        config = self.cfg.long_break if kind == "long" else self.cfg.short_break
+        self._break_details = {
+            "event_id": uuid4().hex,
+            "scheduled": scheduled,
+            "planned_sec": duration,
+            "reward_screen_sec": screen_sec,
+            "interval_sec": config.work_sec,
+        }
+
+    def _end_command(self, kind: str, outcome: str) -> Command:
+        return Command(K.END_BREAK, {
+            "kind": kind, "outcome": outcome, **self._break_details,
+        })
+
     def _finish_break(self, outcome: str) -> list[Command]:
         """outcome: 'completed' | 'skipped' | 'emergency'"""
         kind = self._break_kind
@@ -146,7 +168,7 @@ class PolicyEngine:
 
         self.phase = Phase.COUNTING
         self._break_ends_at = None
-        cmds = [Command(K.END_BREAK, {"kind": kind, "outcome": outcome})]
+        cmds = [self._end_command(kind, outcome)]
         cmds += self._clear_escalation()
         cmds.append(Command(K.LOG, {"event": "break_finished", "kind": kind, "outcome": outcome}))
         return cmds
@@ -198,6 +220,7 @@ class PolicyEngine:
             # mean unlocking three seconds later bought a full five minutes —
             # making the harshest setting in the app the easiest one to dodge.
             self.phase = Phase.LOCKED_BREAK
+            self._identify_break("long", self.cfg.long_break.break_sec, scheduled=True)
             self._lock_asked_at = r.now
             self._lock_ends_at = r.now + self.cfg.long_break.break_sec
             self._lock_engaged = False
@@ -236,7 +259,7 @@ class PolicyEngine:
         self._lock_ends_at = self._lock_asked_at = None
         self._lock_engaged = False
         return [
-            Command(K.END_BREAK, {"kind": "long", "outcome": outcome}),
+            self._end_command("long", outcome),
             Command(K.LOG, {"event": "long_break_finished", "kind": "long",
                             "outcome": outcome}),
         ]
@@ -283,7 +306,7 @@ class PolicyEngine:
                           Phase.LOCKED_BREAK):
             return []
         r = SensorReading(now=now, wall=now, idle_sec=0.0, screen_locked=False)
-        return self._start_break(r, "short", self._next_break_sec())
+        return self._start_break(r, "short", self._next_break_sec(), scheduled=False)
 
     # -- helpers -----------------------------------------------------------
 

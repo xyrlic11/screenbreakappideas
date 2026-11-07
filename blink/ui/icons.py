@@ -28,6 +28,9 @@ FLAME = ""
 CLOSE = ""
 FULLSCREEN = ""
 MESSAGE = ""
+LEAF = "\ue8be"
+LIST = "\ue8a5"
+AWARD = "\ue734"
 
 _family: str | None = None
 

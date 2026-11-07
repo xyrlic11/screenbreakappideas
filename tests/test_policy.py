@@ -214,7 +214,11 @@ def test_a_lock_that_holds_for_the_whole_break_counts_as_completed():
     d.run(310, locked=True)          # screen actually stays away for 5 minutes
 
     end = [c for _, c in d.history if c.kind is K.END_BREAK][-1]
-    assert end.payload == {"kind": "long", "outcome": "completed"}
+    assert end.payload["kind"] == "long"
+    assert end.payload["outcome"] == "completed"
+    assert end.payload["scheduled"] is True
+    assert end.payload["planned_sec"] == d.cfg.long_break.break_sec
+    assert end.payload["reward_screen_sec"] >= d.cfg.long_break.work_sec
     assert d.ticker.policy.phase is Phase.COUNTING
     assert d.long_time == 0.0
 

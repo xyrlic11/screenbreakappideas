@@ -35,6 +35,20 @@ class RingGauge(QWidget):
         colour = self.tone or palette.accent
 
         side = min(self.width(), self.height())
+        if side < 100:
+            p.setPen(palette.text_3)
+            p.setFont(theme.font(theme.CAPTION))
+            p.drawText(QRectF(0, 3, self.width(), 19), Qt.AlignmentFlag.AlignLeft, self.caption)
+            p.setPen(palette.text)
+            p.setFont(theme.semibold(theme.TITLE))
+            p.drawText(QRectF(0, 20, self.width(), 34), Qt.AlignmentFlag.AlignLeft, self.headline)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(palette.stroke)
+            p.drawRoundedRect(QRectF(0, 57, 115, 4), 2, 2)
+            p.setBrush(colour)
+            p.drawRoundedRect(QRectF(0, 57, 115 * self.fraction, 4), 2, 2)
+            p.end()
+            return
         thickness = max(8.0, side * 0.055)
         rect = QRectF((self.width() - side) / 2 + thickness,
                       (self.height() - side) / 2 + thickness,
@@ -52,14 +66,18 @@ class RingGauge(QWidget):
             p.drawArc(rect, 90 * 16, int(-360 * 16 * self.fraction))
 
         p.setPen(palette.text)
-        p.setFont(theme.font(int(side * 0.19), QFont.Weight.Light))
+        size = int(side * 0.19)
+        p.setFont(theme.font(size, QFont.Weight.Light))
+        while size > theme.BODY and p.fontMetrics().horizontalAdvance(self.headline) > rect.width() - 8:
+            size -= 1
+            p.setFont(theme.font(size, QFont.Weight.Light))
         p.drawText(rect.adjusted(0, -side * 0.05, 0, -side * 0.05),
                    Qt.AlignmentFlag.AlignCenter, self.headline)
 
         p.setPen(palette.text_3)
-        p.setFont(theme.font(theme.BODY))
-        p.drawText(QRectF(rect.left(), rect.center().y() + side * 0.10,
-                          rect.width(), side * 0.2),
+        p.setFont(theme.font(theme.CAPTION if side < 150 else theme.BODY))
+        p.drawText(QRectF(0, rect.center().y() + side * 0.10,
+                          self.width(), side * 0.24),
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
                    self.caption)
         p.end()

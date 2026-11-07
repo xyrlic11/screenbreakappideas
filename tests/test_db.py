@@ -158,6 +158,8 @@ def test_a_database_from_before_the_mode_column_still_opens(tmp_path):
     stats = upgraded.stats_for("2026-03-10")
     assert stats.completed == 1
     assert stats.enforced == 1     # rows from before the column are overlays
+    assert upgraded.garden.progress().xp == 0
+    assert "sapling" in upgraded.garden.inventory()
 
     upgraded.record_break("short", "completed", 20, 1200, at(10, 12), mode="popup")
     assert upgraded.stats_for("2026-03-10").enforced == 1

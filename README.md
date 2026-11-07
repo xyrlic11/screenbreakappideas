@@ -24,7 +24,7 @@ python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
 | Flag | What it does |
 |---|---|
 | `--tray` | Start in the tray with no window. What autostart uses |
-| `--debug` | Shrink every interval: a 20 minute cycle becomes 20 seconds |
+| `--debug` | A 20-minute cycle becomes 20 seconds. Uses in-memory history and disables Garden rewards and settings saves |
 | `--simulate 8h` | Replay a working day through the engine and print the timeline. No window, no Qt |
 
 ```
@@ -45,15 +45,19 @@ python tools/build.py
 ```
 
 Regenerates `assets/blink.ico` from the same code that draws the tray
-icon, then runs PyInstaller. Output is `dist/Blink/Blink.exe`, about
-100 MB with Qt bundled. It is unsigned, so SmartScreen warns the first
+icon, then runs PyInstaller. Output is `dist/Blink/Blink.exe` with Qt
+in the same folder. Keep the folder together when distributing the app.
+It is unsigned, so SmartScreen may warn the first
 time anyone else runs it — that needs a code signing certificate.
 
 ## The window
 
-Four pages behind a Fluent navigation sidebar.
+The Fluent sidebar keeps the reminder and the garden in the same window.
 
-- **Home** — a ring counting down to the next break, and today's numbers
+- **Home** — the countdown, break controls, today's numbers, and a Garden preview
+- **My Garden** — a place to arrange decorations and spend Garden Coins
+- **Daily Quests** — two optional goals with rewards you can claim
+- **Achievements** — six badges with unlock dates
 - **Stats** — compliance, streak, and seven days of breaks taken versus skipped
 - **Settings** — every setting that matters, with a control instead of JSON
 - **About** — version, privacy, and where the files live
@@ -67,6 +71,40 @@ deliberate choice from the tray menu.
 Latin text uses Segoe UI Variable, Thai falls back to Leelawadee UI, and
 line height is raised to 150% because Thai stacks vowels above and tone
 marks below the baseline.
+
+## Blink Garden
+
+Every garden starts with a sapling. Buy decorations in **My Garden**, choose
+one from your inventory, and select an empty grass plot. Select a placed item
+to move it. Removing an item returns it to your inventory. With the garden
+focused, use the arrow keys, Enter to select a plot, and Delete to remove the
+selected decoration.
+
+| Reward | XP | Garden Coins | Conditions |
+|---|---:|---:|---|
+| Scheduled eye break | 25 | 5 | 20 minutes of screen time, 20 seconds of rest, up to four rewards per day |
+| Scheduled long break | 60 | 15 | 2 hours of screen time, 5 minutes of rest, up to one reward per day |
+| Daily quest | 30 | 10 | Claim once after one or two eligible breaks |
+
+The configured reminder interval must also meet the corresponding screen-time
+minimum. The cooldown between rewards of the same type is 20 minutes for eye
+breaks and 2 hours for long breaks, even across the 04:00 local day boundary.
+Manual, skipped, and emergency breaks still work as usual. Rewards use the
+timer's completion result. Blink does not track gaze. Missing a day leaves
+your garden and achievements intact.
+
+Level 1 starts at zero XP. Advancing from level (L) costs
+`100 + 50 × (L − 1)` XP. The thresholds for levels 2–5 are 100, 250, 450, and
+700 total XP. Level unlocks make more items available in the shop.
+
+### Save data
+
+The Garden shares `blink.sqlite3` with the reminder. The migration adds a
+unique completion event ID to new history rows and creates tables for the
+player, the reward ledger, quest claims, achievement dates, and inventory
+with placements. Daily quest progress is counted from the reward ledger.
+Old history is preserved. The app commits each new break and its reward
+together, and each purchase commits the balance and item together.
 
 ## How it works
 
@@ -204,7 +242,7 @@ you to save your work, so it must not cover the thing you need to save.
 | | |
 |---|---|
 | `%APPDATA%\Blink\config.json` | Settings. Missing keys are refilled, out-of-range values clamped, a corrupt file falls back to defaults rather than stopping the app |
-| `%APPDATA%\Blink\blink.sqlite3` | Break history, including which mode enforced each break |
+| `%APPDATA%\Blink\blink.sqlite3` | Break history, Garden progress, and layout |
 | `%APPDATA%\Blink\sounds\` | Two chimes, synthesised on first run |
 
 Days roll over at 04:00, not midnight — working until 2am belongs to the

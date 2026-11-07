@@ -62,7 +62,7 @@ def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
-def load_config() -> Config:
+def load_config(*, write_back: bool = True) -> Config:
     """Read config.json, healing anything that is missing or silly."""
     raw: dict[str, Any] = {}
     if CONFIG_PATH.exists():
@@ -72,7 +72,8 @@ def load_config() -> Config:
             raw = {}   # a corrupt file falls back to defaults rather than dying
 
     config = _from_dict(Config(), _migrate(raw), prefix="")
-    save_config(config)     # write back a complete, well-formed file
+    if write_back:
+        save_config(config)
     return config
 
 
