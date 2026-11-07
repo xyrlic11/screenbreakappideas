@@ -1,4 +1,4 @@
-"""The main window: a Fluent navigation view with four pages.
+"""The main window and its Fluent navigation.
 
 Uses the native title bar rather than a hand-drawn one, so snapping,
 Aero shake, rounded corners and the dark title bar all come from Windows
@@ -7,6 +7,8 @@ instead of being reimplemented badly.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import QEvent, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (QHBoxLayout, QStackedWidget, QVBoxLayout,
@@ -14,9 +16,11 @@ from PySide6.QtWidgets import (QHBoxLayout, QStackedWidget, QVBoxLayout,
 
 from .. import i18n
 from ..core.models import Config
-from ..storage.db import History
+from ..core.garden import Reward
+from ..storage.db import History, day_of
 from . import icons, theme
 from .pages import AboutPage, HomePage, SettingsPage, StatsPage
+from .pages.garden import AchievementsPage, GardenDashboard, GardenPage, QuestsPage
 
 _SIDEBAR_W = 220
 _ITEM_H = 40
@@ -32,10 +36,22 @@ class NavItem(QWidget):
         self.selected = False
         self.setFixedHeight(_ITEM_H)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self.setAccessibleName(i18n.t(self.key))
+        self.update()
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() is Qt.MouseButton.LeftButton:
             self.chosen.emit(self.index)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.chosen.emit(self.index)
+        else:
+            super().keyPressEvent(event)
 
     def enterEvent(self, event) -> None:
         self.update()
@@ -49,10 +65,15 @@ class NavItem(QWidget):
         palette = theme.p()
         rect = QRectF(self.rect()).adjusted(4, 2, -4, -2)
 
-        if self.selected or self.underMouse():
+        if self.selected or self.underMouse() or self.hasFocus():
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(palette.layer_alt if self.selected else palette.layer)
             p.drawRoundedRect(rect, 5, 5)
+        if self.hasFocus():
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(palette.accent, 1))
+            p.drawRoundedRect(rect, 5, 5)
+            p.setPen(Qt.PenStyle.NoPen)
 
         if self.selected:
             # The accent pill Windows uses to mark the current page.
@@ -76,11 +97,13 @@ class MainWindow(QWidget):
     pause_toggled = Signal()
     settings_changed = Signal()
 
-    def __init__(self, config: Config, history: History) -> None:
+    def __init__(self, config: Config, history: History, *, debug: bool = False) -> None:
         super().__init__()
         self.cfg = config
         self.history = history
         self._mica = False
+        self._quest_day = day_of(datetime.now())
+        self._last_status: dict | None = None
 
         self.setWindowTitle(i18n.t("app.name"))
         self.setWindowIcon(icons.app_icon(theme.p().accent))
@@ -95,17 +118,28 @@ class MainWindow(QWidget):
         layout.addWidget(self._sidebar())
 
         self.stack = QStackedWidget()
-        self.stack.setStyleSheet("background:transparent;")
-        self.home = HomePage(config)
+        self.stack.setObjectName("pageStack")
+        self.stack.setStyleSheet("QStackedWidget#pageStack { background: transparent; }")
+        self.dashboard = GardenDashboard(history, debug=debug)
+        self.home = HomePage(config, garden=self.dashboard)
+        self.garden = GardenPage(history)
+        self.quests = QuestsPage(history, debug=debug)
+        self.achievements = AchievementsPage(history)
         self.stats = StatsPage(history)
-        self.settings = SettingsPage(config, self.settings_changed.emit)
+        self.settings = SettingsPage(config, self.settings_changed.emit, persist=not debug)
         self.about = AboutPage()
-        for page in (self.home, self.stats, self.settings, self.about):
+        self.pages = (self.home, self.garden, self.quests, self.achievements,
+                      self.stats, self.settings, self.about)
+        for page in self.pages:
             self.stack.addWidget(page)
         layout.addWidget(self.stack, 1)
 
         self.home.break_now.connect(self.break_now.emit)
         self.home.pause_toggled.connect(self.pause_toggled.emit)
+        self.dashboard.open_garden.connect(lambda: self._select(self.stack.indexOf(self.garden)))
+        self.dashboard.open_quests.connect(lambda: self._select(self.stack.indexOf(self.quests)))
+        self.garden.changed.connect(self.refresh_garden)
+        self.quests.rewarded.connect(self.show_reward)
         self._select(0)
 
     def _sidebar(self) -> QWidget:
@@ -118,6 +152,9 @@ class MainWindow(QWidget):
 
         for index, (glyph, key) in enumerate((
             (icons.HOME, "nav.home"),
+            (icons.LEAF, "nav.garden"),
+            (icons.LIST, "nav.quests"),
+            (icons.AWARD, "nav.achievements"),
             (icons.CHART, "nav.stats"),
             (icons.SETTINGS, "nav.settings"),
             (icons.INFO, "nav.about"),
@@ -138,7 +175,7 @@ class MainWindow(QWidget):
         # The pages paint no background of their own, so the window has to
         # redraw its base or the previous page stays underneath.
         self.update()
-        if index == 1:
+        if self.stack.currentWidget() is self.stats:
             self.stats.refresh()
 
     # -- appearance --------------------------------------------------------
@@ -182,23 +219,54 @@ class MainWindow(QWidget):
     def retranslate(self) -> None:
         self.setWindowTitle(i18n.t("app.name"))
         for item in self.nav_items:
-            item.update()
-        for page in (self.home, self.stats, self.settings, self.about):
+            item.retranslate()
+        for page in self.pages:
             page.retranslate()
+        self.dashboard.retranslate()
+        self.refresh_stats()
+        self._refresh_home_timer()
 
     # -- driven by the controller -----------------------------------------
 
     def update_status(self, payload: dict) -> None:
+        self._last_status = payload
+        day = day_of(datetime.now())
+        if day != self._quest_day:
+            self._quest_day = day
+            self.refresh_stats()
+            self.refresh_garden()
         if self.isVisible():
-            self.home.update_status(payload, self.cfg.short_break.work_sec)
+            self._refresh_home_timer()
+
+    def _refresh_home_timer(self) -> None:
+        if self._last_status is not None:
+            self.home.update_status(self._last_status, self.cfg.short_break.work_sec)
 
     def refresh_stats(self) -> None:
         self.home.update_stats(self.history.today())
-        if self.stack.currentIndex() == 1:
+        if self.stack.currentWidget() is self.stats:
             self.stats.refresh()
+
+    def refresh_garden(self) -> None:
+        self.dashboard.refresh()
+        self.garden.refresh()
+        self.quests.refresh()
+        self.achievements.refresh()
+
+    def show_reward(self, reward: Reward) -> None:
+        self.refresh_garden()
+        self.dashboard.show_reward(reward)
+
+    def set_break_active(self, active: bool) -> None:
+        for page in (self.garden, self.quests):
+            page.setEnabled(not active)
+        if active:
+            self.dashboard.stop_animation()
 
     def reveal(self) -> None:
         self.refresh_stats()
+        self.refresh_garden()
+        self._refresh_home_timer()
         self.show()
         self.setWindowState(
             self.windowState() & ~Qt.WindowState.WindowMinimized

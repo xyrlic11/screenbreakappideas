@@ -23,10 +23,11 @@ from .base import Page
 
 class SettingsPage(Page):
     def __init__(self, config: Config, on_change: Callable[[], None],
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, *, persist: bool = True) -> None:
         super().__init__("nav.settings", parent)
         self.cfg = config
         self._on_change = on_change
+        self._persist = persist
         self._rows: list[SettingRow] = []
         self._build()
 
@@ -40,7 +41,8 @@ class SettingsPage(Page):
         return row
 
     def _save(self) -> None:
-        save_config(self.cfg)
+        if self._persist:
+            save_config(self.cfg)
         self._on_change()
 
     def _minutes(self, get: Callable[[], int], put: Callable[[int], None],
@@ -159,10 +161,12 @@ class SettingsPage(Page):
 
         startup = Toggle(autostart_enabled())
         startup.toggled.connect(set_autostart)
+        startup.setEnabled(self._persist)
         self._row("settings.autostart", "settings.autostart_desc", startup)
 
         open_config = FlatButton(i18n.t("settings.open_json"))
         open_config.clicked.connect(self._open_config)
+        open_config.setEnabled(self._persist)
         self._row("settings.config_file", "settings.config_file_desc", open_config)
         self.body.addStretch(1)
 

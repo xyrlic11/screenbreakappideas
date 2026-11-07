@@ -12,8 +12,11 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, time as time_of_day, timedelta
 from pathlib import Path
+from uuid import uuid4
 
+from ..core.garden import Reward
 from .config import CONFIG_DIR
+from .garden import Garden
 
 DB_PATH = CONFIG_DIR / "blink.sqlite3"
 
@@ -33,9 +36,10 @@ CREATE INDEX IF NOT EXISTS breaks_day ON breaks(day);
 # Added after the first release. A completed break means something different
 # depending on whether the screen was taken over or a card appeared in the
 # corner, so the record has to say which.
-_MIGRATIONS = [
-    "ALTER TABLE breaks ADD COLUMN mode TEXT NOT NULL DEFAULT 'overlay'",
-]
+_MIGRATIONS = {
+    "mode": "ALTER TABLE breaks ADD COLUMN mode TEXT NOT NULL DEFAULT 'overlay'",
+    "event_id": "ALTER TABLE breaks ADD COLUMN event_id TEXT",
+}
 
 # 04:00, so a session that runs past midnight still belongs to the day it
 # started. Working until 2am is the same day, whatever the calendar says.
@@ -70,26 +74,26 @@ class DayStats:
 
 
 class History:
-    def __init__(self, path: Path | str | None = None) -> None:
+    def __init__(self, path: Path | str | None = None, *, rewards_enabled: bool = True) -> None:
         self.path = Path(path) if path is not None else DB_PATH
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._db = sqlite3.connect(str(self.path))
         self._db.row_factory = sqlite3.Row
+        self._db.execute("PRAGMA foreign_keys = ON")
+        self._rewards_enabled = rewards_enabled
         self._db.executescript(_SCHEMA)
         self._migrate()
-        self._db.commit()
+        self.garden = Garden(self._db)
 
     def _migrate(self) -> None:
-        """Bring an older database up to date, one column at a time.
-
-        No version table: re-running an ALTER that already happened raises
-        OperationalError, which is a perfectly good "already applied".
-        """
-        for statement in _MIGRATIONS:
-            try:
-                self._db.execute(statement)
-            except sqlite3.OperationalError:
-                pass
+        """Add event identity without rewriting historical break rows."""
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in self._db.execute("PRAGMA table_info(breaks)")}
+            for column, statement in _MIGRATIONS.items():
+                if column not in columns:
+                    self._db.execute(statement)
+            self._db.execute("CREATE UNIQUE INDEX IF NOT EXISTS breaks_event ON breaks(event_id)")
 
     def close(self) -> None:
         self._db.close()
@@ -98,16 +102,29 @@ class History:
 
     def record_break(self, kind: str, outcome: str, planned_sec: float,
                      screen_sec: float, moment: datetime | None = None,
-                     mode: str = "overlay") -> None:
+                     mode: str = "overlay", *, event_id: str | None = None,
+                     scheduled: bool = False, reward_screen_sec: float = 0,
+                     interval_sec: float = 0) -> Reward | None:
         moment = moment or datetime.now()
-        self._db.execute(
-            "INSERT INTO breaks"
-            " (started_at, day, kind, outcome, planned_sec, screen_sec, mode)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (moment.isoformat(timespec="seconds"), day_of(moment), kind, outcome,
-             int(planned_sec), int(screen_sec), mode),
-        )
-        self._db.commit()
+        day = day_of(moment)
+        with self._db:
+            inserted = self._db.execute(
+                "INSERT INTO breaks"
+                " (started_at, day, kind, outcome, planned_sec, screen_sec, mode, event_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
+                (moment.isoformat(timespec="seconds"), day, kind, outcome,
+                 int(planned_sec), int(screen_sec), mode, event_id or uuid4().hex),
+            )
+            if inserted.rowcount and self._rewards_enabled and scheduled and outcome == "completed":
+                return self.garden.grant_break(inserted.lastrowid, kind, day, moment,
+                                               planned_sec, reward_screen_sec, interval_sec)
+        return None
+
+    def claim_quest(self, quest: str, moment: datetime | None = None) -> Reward | None:
+        if not self._rewards_enabled:
+            return None
+        moment = moment or datetime.now()
+        return self.garden.claim(quest, day_of(moment), moment)
 
     # -- reading -----------------------------------------------------------
 

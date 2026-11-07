@@ -60,7 +60,7 @@ class Controller(QObject):
 
         self.ticker = Ticker(config)
         self.reader = SensorReader()
-        self.history = History()
+        self.history = History(":memory:", rewards_enabled=False) if debug else History()
 
         self.overlays = OverlayManager(config, self)
         self.popup = BreakPopup(config)
@@ -69,7 +69,7 @@ class Controller(QObject):
         self.long_warning = LongWarningPanel(config)
         self.tray = TrayIcon(config, self)
         self.sounds = Sounds(config)
-        self.window = MainWindow(config, self.history)
+        self.window = MainWindow(config, self.history, debug=debug)
         self.hud = MiniHud(config)
 
         # Whichever of the two is showing the current break. Everything after
@@ -166,6 +166,7 @@ class Controller(QObject):
         return section.enforcement
 
     def _on_start_break(self, payload: dict) -> None:
+        self.window.set_break_active(True)
         self.hud.hide()      # the break itself is the status now
         self.toast.hide()
         self.edge.hide()
@@ -187,21 +188,20 @@ class Controller(QObject):
     def _on_end_break(self, payload: dict) -> None:
         self._presenter.finish()
         self.sounds.play_end()
-        self._record(payload["kind"], payload["outcome"])
+        self.window.set_break_active(False)
+        reward = self.history.record_break(**payload, screen_sec=self._screen_at_break,
+                                           mode=self._mode)
+        self.window.refresh_stats()
+        if reward is not None:
+            self.window.show_reward(reward)
 
     def _on_lock(self, payload: dict) -> None:
         # Just ask. The policy watches whether the screen really went away and
         # sends END_BREAK with the honest outcome when it knows.
+        self.window.set_break_active(True)
         self._mode = LOCK
         self._screen_at_break = self._last_screen_sec
         lock_workstation()
-
-    def _record(self, kind: str, outcome: str) -> None:
-        planned = (self.cfg.long_break.break_sec if kind == "long"
-                   else self.cfg.short_break.break_sec)
-        self.history.record_break(kind, outcome, planned, self._screen_at_break,
-                                  mode=self._mode)
-        self.window.refresh_stats()
 
     def _on_show_long_warning(self, payload: dict) -> None:
         self.toast.hide()   # a pending eye-break toast is now beside the point
@@ -268,7 +268,8 @@ class Controller(QObject):
         self.window.hide()
         self.tray.hide()
         self.history.close()
-        save_config(self.cfg)
+        if not self.debug:
+            save_config(self.cfg)
         QApplication.instance().quit()
 
 

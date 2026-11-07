@@ -42,6 +42,10 @@ class StatsPage(Page):
         self.legend = QLabel()
         self.legend.setFont(theme.font(theme.CAPTION))
         self.body.addWidget(self.legend)
+        self.completed_modes = QLabel()
+        self.completed_modes.setWordWrap(True)
+        self.completed_modes.setFont(theme.font(theme.BODY))
+        self.body.addWidget(self.completed_modes)
         self.body.addStretch(1)
         self.refresh()
 
@@ -69,6 +73,10 @@ class StatsPage(Page):
         ])
         self.legend.setText(i18n.t("stats.legend"))
         self.legend.setStyleSheet(f"color:{palette.text_3.name()};")
+        self.completed_modes.setText(i18n.t("stats.completed_modes",
+                                           popup=today.completed - today.enforced,
+                                           enforced=today.enforced))
+        self.completed_modes.setStyleSheet(f"color:{palette.text_2.name()};")
 
     def retranslate(self) -> None:
         super().retranslate()

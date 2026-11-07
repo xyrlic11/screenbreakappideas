@@ -13,13 +13,15 @@ from .. import icons, theme
 from ..charts import RingGauge
 from ..widgets import FlatButton
 from .base import Page, StatTile, tile_row
+from .garden import GardenDashboard
 
 
 class HomePage(Page):
     break_now = Signal()
     pause_toggled = Signal()
 
-    def __init__(self, config, parent: QWidget | None = None) -> None:
+    def __init__(self, config, parent: QWidget | None = None, *,
+                 garden: GardenDashboard | None = None) -> None:
         super().__init__("nav.home", parent)
         self.cfg = config
         self._paused = False
@@ -27,25 +29,34 @@ class HomePage(Page):
 
         self.body.addWidget(self._greeting_block())
         self.ring = RingGauge()
-        self.ring.setMinimumHeight(260)
-        self.body.addWidget(self.ring)
+        if garden is None:
+            self.ring.setMinimumHeight(260)
+            self.body.addWidget(self.ring)
+        else:
+            self.heading.setContentsMargins(36, 22, 36, 8)
+            self.ring.setMinimumSize(140, 62)
 
         actions = QWidget()
         actions.setStyleSheet("background:transparent;")
         row = QHBoxLayout(actions)
-        row.setContentsMargins(0, 6, 0, 6)
+        row.setContentsMargins(0, 2, 0, 2)
         row.setSpacing(10)
+        if garden is not None:
+            row.addWidget(self.ring)
         row.addStretch(1)
 
         self.break_button = FlatButton(i18n.t("tray.break_now"), accent=True)
         self.break_button.clicked.connect(self.break_now.emit)
-        row.addWidget(self.break_button)
+        row.addWidget(self.break_button, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self.pause_button = FlatButton(i18n.t("tray.pause_hour"))
         self.pause_button.clicked.connect(self.pause_toggled.emit)
-        row.addWidget(self.pause_button)
-        row.addStretch(1)
+        row.addWidget(self.pause_button, alignment=Qt.AlignmentFlag.AlignVCenter)
+        if garden is None:
+            row.addStretch(1)
         self.body.addWidget(actions)
+        if garden is not None:
+            self.body.addWidget(garden)
 
         self.section("home.today")
         self.completed = StatTile(icons.CHECK)
@@ -53,6 +64,7 @@ class HomePage(Page):
         self.screen_time = StatTile(icons.EYE)
         self.body.addWidget(tile_row([self.completed, self.skipped, self.screen_time]))
         self.body.addStretch(1)
+        self.garden = garden
 
     def _greeting_block(self) -> QWidget:
         block = QWidget()
@@ -118,7 +130,7 @@ class HomePage(Page):
             return
         if state in ("idle", "locked"):
             self.ring.set_values(0.0, i18n.t("home.away_short"),
-                                 i18n.t(f"tray.{state}"), theme.p().text_3)
+                                 i18n.t(f"home.status_{state}"), theme.p().text_3)
             return
 
         minutes, seconds = int(remaining) // 60, int(remaining) % 60
@@ -132,6 +144,8 @@ class HomePage(Page):
 
     def update_stats(self, stats: DayStats) -> None:
         self._today = stats
+        if self.garden is not None:
+            self.garden.update_break_summary(stats.completed)
         self.refresh_greeting()
         palette = theme.p()
         missed = stats.skipped + stats.emergency
@@ -147,5 +161,6 @@ class HomePage(Page):
         self.refresh_greeting()
         self.break_button.text = i18n.t("tray.break_now")
         self.pause_button.text = i18n.t("tray.resume" if self._paused else "tray.pause_hour")
+        self.pause_button.colour = theme.p().text
         self.break_button.update()
         self.pause_button.update()

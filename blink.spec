@@ -10,6 +10,12 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH)
 
+# PyInstaller searches PATH for DLL dependencies. Match the Windows loader's
+# preference for System32 so tools on PATH cannot shadow Qt's system ICU.
+if os.name == "nt":
+    system32 = Path(os.environ["SystemRoot"]) / "System32"
+    os.environ["PATH"] = os.pathsep.join((str(system32), os.environ.get("PATH", "")))
+
 # BLINK_CONSOLE=1 builds a console version. Invaluable when something only
 # breaks once frozen, since a windowed build has nowhere to print.
 CONSOLE = bool(os.environ.get("BLINK_CONSOLE"))

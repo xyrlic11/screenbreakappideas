@@ -31,10 +31,13 @@ class Page(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea{background:transparent;}")
+        scroll.setObjectName("pageScroll")
+        scroll.setStyleSheet("QScrollArea#pageScroll { background: transparent; }")
+        self.scroll = scroll
 
         body = QWidget()
-        body.setStyleSheet("background:transparent;")
+        body.setObjectName("pageBody")
+        body.setStyleSheet("QWidget#pageBody { background: transparent; }")
         self.body = QVBoxLayout(body)
         self.body.setContentsMargins(36, 0, 36, 32)
         self.body.setSpacing(10)
@@ -56,8 +59,10 @@ class Page(QWidget):
     def retranslate(self) -> None:
         """Subclasses extend this; the shared parts are handled here."""
         self.heading.setText(i18n.t(self._title_key))
+        self.heading.setStyleSheet(f"color:{theme.p().text.name()};")
         for label, key in self._sections:
             label.setText(i18n.t(key))
+            label.setStyleSheet(f"color:{theme.p().text.name()};")
 
 
 class StatTile(QWidget):

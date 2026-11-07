@@ -75,7 +75,7 @@ def _clock(seconds: float) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
-    config = load_config()
+    config = load_config(write_back=not (args.debug or args.simulate))
     if args.debug:
         config = config.debug_preset()
 
